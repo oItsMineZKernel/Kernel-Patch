@@ -1,0 +1,48 @@
+From 22fb5765bfb079e4d2db2b2309626da3a6461bfc Mon Sep 17 00:00:00 2001
+From: oItsMineZ <135024283+oItsMineZ@users.noreply.github.com>
+Date: Mon, 24 Feb 2025 10:13:26 -0800
+Subject: [PATCH] kernel: implement KernelSU Next cred patched
+
+---
+ include/linux/cred.h | 11 +++++++++++
+ kernel/cred.c        |  2 +-
+ 2 files changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/include/linux/cred.h b/include/linux/cred.h
+index 0dc389bb5003..202f8df3bd94 100644
+--- a/include/linux/cred.h
++++ b/include/linux/cred.h
+@@ -257,6 +257,17 @@ static inline const struct cred *get_cred(const struct cred *cred)
+  * on task_struct are attached by const pointers to prevent accidental
+  * alteration of otherwise immutable credential sets.
+  */
++static inline const struct cred *get_cred_rcu(const struct cred *cred)
++ {
++	 struct cred *nonconst_cred = (struct cred *) cred;
++	 if (!cred)
++		 return NULL;
++	 if (!atomic_inc_not_zero(&nonconst_cred->usage))
++		 return NULL;
++	 validate_creds(cred);
++	 return cred;
++ }
++
+ static inline void put_cred(const struct cred *_cred)
+ {
+ 	struct cred *cred = (struct cred *) _cred;
+diff --git a/kernel/cred.c b/kernel/cred.c
+index 7a8292d5af97..8dc56f7169e0 100644
+--- a/kernel/cred.c
++++ b/kernel/cred.c
+@@ -195,7 +195,7 @@ const struct cred *get_task_cred(struct task_struct *task)
+ 	do {
+ 		cred = __task_cred((task));
+ 		BUG_ON(!cred);
+-	} while (!atomic_inc_not_zero(&((struct cred *)cred)->usage));
++	} while (!get_cred_rcu(cred));
+ 
+ 	rcu_read_unlock();
+ 	return cred;
+-- 
+2.39.5
+
