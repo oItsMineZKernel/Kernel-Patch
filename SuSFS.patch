@@ -1,6 +1,6 @@
-From 49ff1307471fcc30d6a77f1ae87c6439b79e726b Mon Sep 17 00:00:00 2001
+From 8cbc76472079ce44afeb6b2108a142464b4ac935 Mon Sep 17 00:00:00 2001
 From: oItsMineZ <135024283+oItsMineZ@users.noreply.github.com>
-Date: Mon, 10 Mar 2025 21:18:36 -0700
+Date: Fri, 18 Apr 2025 17:37:40 -0700
 Subject: [PATCH] fs: implement SuSFS v1.5.5
 
 ---
@@ -19,7 +19,7 @@ Subject: [PATCH] fs: implement SuSFS v1.5.5
  fs/proc/fd.c                |  17 +
  fs/proc/task_mmu.c          |  17 +
  fs/proc_namespace.c         |  22 +
- fs/readdir.c                |  28 ++
+ fs/readdir.c                |  23 +
  fs/stat.c                   |  18 +
  fs/statfs.c                 |  43 ++
  fs/sus_su.c                 | 140 ++++++
@@ -31,7 +31,7 @@ Subject: [PATCH] fs: implement SuSFS v1.5.5
  include/linux/susfs_def.h   |  62 +++
  kernel/kallsyms.c           |  11 +
  kernel/sys.c                |   6 +
- 27 files changed, 2039 insertions(+), 1 deletion(-)
+ 27 files changed, 2034 insertions(+), 1 deletion(-)
  create mode 100644 fs/sus_su.c
  create mode 100644 fs/susfs.c
  create mode 100644 include/linux/sus_su.h
@@ -884,7 +884,7 @@ index c00d2caca894..68394a242030 100644
  {
  	return container_of(fse, struct inotify_event_info, fse);
 diff --git a/fs/overlayfs/inode.c b/fs/overlayfs/inode.c
-index efed50304b49..b8c78d2c5090 100644
+index 30a1c7fc8c75..13cae88aa126 100644
 --- a/fs/overlayfs/inode.c
 +++ b/fs/overlayfs/inode.c
 @@ -69,6 +69,14 @@ int ovl_getattr(const struct path *path, struct kstat *stat,
@@ -1167,7 +1167,7 @@ index b859aaeecb27..3b8efe4bbefe 100644
  	if (sb->s_op->show_devname) {
  		seq_puts(m, "device ");
 diff --git a/fs/readdir.c b/fs/readdir.c
-index d336db65a33e..91fc1429745c 100644
+index 0c357663e33a..fbae0517a6e1 100644
 --- a/fs/readdir.c
 +++ b/fs/readdir.c
 @@ -22,6 +22,10 @@
@@ -1181,20 +1181,7 @@ index d336db65a33e..91fc1429745c 100644
  
  int iterate_dir(struct file *file, struct dir_context *ctx)
  {
-@@ -174,6 +178,12 @@ static int filldir(struct dir_context *ctx, const char *name, int namlen,
- 	int reclen = ALIGN(offsetof(struct linux_dirent, d_name) + namlen + 2,
- 		sizeof(long));
- 
-+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-+	if (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) && susfs_sus_ino_for_filldir64(ino)) {
-+		return 0;
-+	}
-+#endif
-+
- 	buf->error = -EINVAL;	/* only used if we fail.. */
- 	if (reclen > buf->count)
- 		return -EINVAL;
-@@ -260,6 +270,12 @@ static int filldir64(struct dir_context *ctx, const char *name, int namlen,
+@@ -297,6 +301,12 @@ static int filldir64(struct dir_context *ctx, const char *name, int namlen,
  	int reclen = ALIGN(offsetof(struct linux_dirent64, d_name) + namlen + 1,
  		sizeof(u64));
  
@@ -1204,32 +1191,29 @@ index d336db65a33e..91fc1429745c 100644
 +	}
 +#endif
 +
- 	buf->error = -EINVAL;	/* only used if we fail.. */
- 	if (reclen > buf->count)
- 		return -EINVAL;
-@@ -352,6 +368,13 @@ static int compat_fillonedir(struct dir_context *ctx, const char *name,
+ 	buf->error = verify_dirent_name(name, namlen);
+ 	if (unlikely(buf->error))
+ 		return buf->error;
+@@ -461,9 +471,22 @@ static int compat_filldir(struct dir_context *ctx, const char *name, int namlen,
+ 	int reclen = ALIGN(offsetof(struct compat_linux_dirent, d_name) +
+ 		namlen + 2, sizeof(compat_long_t));
  
- 	if (buf->result)
- 		return -EINVAL;
-+
 +#ifdef CONFIG_KSU_SUSFS_SUS_PATH
 +	if (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) && susfs_sus_ino_for_filldir64(ino)) {
 +		return 0;
 +	}
 +#endif
 +
- 	d_ino = ino;
- 	if (sizeof(d_ino) < sizeof(ino) && d_ino != ino) {
- 		buf->result = -EOVERFLOW;
-@@ -424,6 +447,11 @@ static int compat_filldir(struct dir_context *ctx, const char *name, int namlen,
  	buf->error = -EINVAL;	/* only used if we fail.. */
  	if (reclen > buf->count)
  		return -EINVAL;
++
 +#ifdef CONFIG_KSU_SUSFS_SUS_PATH
 +	if (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) && susfs_sus_ino_for_filldir64(ino)) {
 +		return 0;
 +	}
 +#endif
++
  	d_ino = ino;
  	if (sizeof(d_ino) < sizeof(ino) && d_ino != ino) {
  		buf->error = -EOVERFLOW;
@@ -1272,7 +1256,7 @@ index 432e13460733..954f678f434c 100644
  	stat->ino = inode->i_ino;
  	stat->mode = inode->i_mode;
 diff --git a/fs/statfs.c b/fs/statfs.c
-index c25dd9a26cc1..a0abe226159a 100644
+index ca1084cbe03c..d1d8731825f1 100644
 --- a/fs/statfs.c
 +++ b/fs/statfs.c
 @@ -9,6 +9,10 @@
@@ -2441,10 +2425,10 @@ index 1ff21c19b0b9..99adc5d71846 100644
  
  struct file; /* forward dec */
 diff --git a/include/linux/sched.h b/include/linux/sched.h
-index 19f1d185988d..7f10e62664e5 100644
+index bd5894b8934f..e31dbd7a7245 100644
 --- a/include/linux/sched.h
 +++ b/include/linux/sched.h
-@@ -1317,6 +1317,10 @@ struct task_struct {
+@@ -1319,6 +1319,10 @@ struct task_struct {
  	 * New fields for task_struct should be added above here, so that
  	 * they are included in the randomized portion of task_struct.
  	 */
@@ -2731,10 +2715,10 @@ index 000000000000..eafccb32c35e
 +
 +#endif // #ifndef KSU_SUSFS_DEF_H
 diff --git a/kernel/kallsyms.c b/kernel/kallsyms.c
-index f8674e39e770..f064e8f56f59 100644
+index 8ac65579270d..b11b5aee2ede 100644
 --- a/kernel/kallsyms.c
 +++ b/kernel/kallsyms.c
-@@ -679,8 +679,19 @@ static int s_show(struct seq_file *m, void *p)
+@@ -687,8 +687,19 @@ static int s_show(struct seq_file *m, void *p)
  		seq_printf(m, "%pK %c %s\t[%s]\n", (void *)iter->value,
  			   type, iter->name, iter->module_name);
  	} else
@@ -2755,7 +2739,7 @@ index f8674e39e770..f064e8f56f59 100644
  }
  
 diff --git a/kernel/sys.c b/kernel/sys.c
-index 4e351800269d..0bc08e8bf818 100644
+index 46ad397cce21..c7f1fe12b24e 100644
 --- a/kernel/sys.c
 +++ b/kernel/sys.c
 @@ -1177,12 +1177,18 @@ static int override_release(char __user *release, size_t len)
